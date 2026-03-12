@@ -1,47 +1,43 @@
-import pandas as pd
-from sqlalchemy import create_engine
+import csv
 import os
-from dotenv import load_dotenv
+from sqlalchemy.orm import Session
+from app.database.session import SessionLocal
+from app.models.database_models import Customer, Product, Order, OrderItem, Payment
 
-load_dotenv()
-DATABASE_URL = os.getenv("DATABASE_URL")
+# Define the base folder path
+BASE_CSV_PATH = "csv/cleaned_csv"
 
-if not DATABASE_URL:
-    raise ValueError("HATA: .env dosyasında DATABASE_URL bulunamadı!")
+def seed_file(file_name, model_class):
+    db: Session = SessionLocal()
+    # Combining the folder path and the file name
+    file_path = os.path.join(BASE_CSV_PATH, file_name)
 
-engine = create_engine(DATABASE_URL)
+    if not os.path.exists(file_path):
+        print(f"⚠️ Skipping: {file_name} not found at {file_path}")
+        return
 
-# 1. DİKKAT: Sözlük (dict) yerine Liste (list) kullanıyoruz ki sıra KESİN olsun.
-# Önce ana tablolar, sonra bağlı tablolar yüklenecek.
-csv_files_ordered = [
-    # ('customers', 'backend/csv/cleaned_csv/customers.csv'),
-    # ('products', 'csv/cleaned_csv/products.csv'),
-    # ('orders', 'csv/cleaned_csv/orders.csv'),
-    # ('order_items', 'csv/cleaned_csv/order_items.csv'),
-    # ('payments', 'csv/cleaned_csv/payments.csv'),
-    ('reviews', 'backend/csv/cleaned_csv/reviews.csv') 
-]
+    print(f"⌛ Seeding {file_name}...")
+    
+    try:
+        with open(file_path, mode='r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                # This creates an object of the class (Customer, Product, etc.)
+                # using the data from the CSV row
+                obj = model_class(**row) 
+                db.add(obj)
+            db.commit()
+            print(f"✅ {file_name} completed.")
+    except Exception as e:
+        print(f"❌ Error in {file_name}: {e}")
+        db.rollback()
+    finally:
+        db.close()
 
-print("Veriler Neon'a aktarılıyor. Mimari kurallara (Foreign Keys) uyuluyor...\n")
-
-for table_name, file_path in csv_files_ordered:
-    if os.path.exists(file_path):
-        print(f"⏳ {table_name} okunuyor...")
-        df = pd.read_csv(file_path)
-        
-        # 2. Tarih dönüşümleri (Orders tablosundaki string tarihleri DateTime'a çeviriyoruz)
-        if table_name == 'orders':
-            df['order_purchase_timestamp'] = pd.to_datetime(df['order_purchase_timestamp'])
-            df['order_delivered_customer_date'] = pd.to_datetime(df['order_delivered_customer_date'])
-        
-        # 3. FELAKETİ ÖNLÜYORUZ: 'replace' yerine 'append' kullanıyoruz.
-        try:
-            df.to_sql(table_name, engine, if_exists='append', index=False)
-            print(f"✅ {table_name} başarıyla eklendi!")
-        except Exception as e:
-            print(f"❌ {table_name} yüklenirken HATA: {e}")
-            break # Hata alırsak zincirleme patlamaması için döngüyü durdur
-    else:
-        print(f"❌ DOSYA BULUNAMADI: {file_path}")
-
-print("\nVeritabanı besleme işlemi (Seeding) tamamlandı.")
+if __name__ == "__main__":
+    # IMPORTANT: We seed them in order because of Foreign Key dependencies
+    seed_file("customers.csv", Customer)
+    seed_file("products.csv", Product)
+    seed_file("orders.csv", Order)
+    seed_file("order_items.csv", OrderItem)
+    seed_file("payments.csv", Payment)
